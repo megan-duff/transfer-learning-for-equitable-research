@@ -1,1 +1,11 @@
+This directory contains all scripts and functions needed to generate both additive effects only phenotypes and additive and interaction effects phenotypes. 
 
+1. outer_causal_snp_generation.sh -and- causal_snp_generation.R
+- Scripts and functions for randomly selecting a specified number of causal SNPs from a given list of SNPs. 
+
+2. additive-effects-only-phenotypes -and- additive-and-interaction-effects-phenotypes
+- These directories provide the scripts and functions for simulating the additive effects only phenotypes and additive and interaction effects phenotypes for both the source and target sets. 
+
+3. train-val-test-file-generation
+- This directory contains scripts to (1) randomly select individuals to be in the training, validation, or test set and (2) break up each simulated genotype and phenotype files to be training, validation, and test set genotype and phenotype files.
+- This is done in preparation of model training. 
