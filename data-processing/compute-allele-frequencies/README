@@ -1,1 +1,9 @@
+File: *_ref_af_calc.sh
+- Computes the allele frequencies for each 1000 Genomes reference ancestry group. 
 
+File: *_sim_af_calc.sh
+- Computes the allele frequencies for each simulated ancestry group (simulated via HAPGEN2).
+
+File: *_train_af.sh
+- Computes the allele frequencies computed solely on the training dataset for each simulated ancestry group. 
+- This will be used to standardize genotypes for the neural network models. 
