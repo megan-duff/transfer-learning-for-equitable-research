@@ -1,3 +1,18 @@
-This directory provides the neccessary files and analysis to prepare the data prior to data simulation and model training. 
+This directory provides the neccessary files and analysis to prepare the data prior to data simulation and model training, as well as some scripts to test accuracy of simulated data (such as computing allele frequencies for the simulated and reference data). 
+
+1. download_data.sh
+- Provides the links to all necessary data needed for the simulated data analysis. 
+
+2. create_hapmap3_files.sh
+- After downloading the relevant hapmap3 files, combine them into one file for ease of filtering using PLINK. 
+
+3. create-genome-wide-files
+- This directory contains scripts to convert chromosome specific files to genome wide files.
+
+4. compute-allele-frequencies
+- This directory contains scripts to compute allele frequencies of simulated and reference data. 
+
+5. quality_control_1KG_data.sh
+- PLINK commands to quality control the reference 1000 Genomes project data.
 
 
