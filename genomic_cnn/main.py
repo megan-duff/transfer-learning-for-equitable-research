@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--val_pheno_file', type=str, required=True, help='Validation phenotype file')
     parser.add_argument('--test_pheno_file', type=str, required=True, help='Test phenotype file')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs to run neural network training')
-    parser.add_argument('--batch-size', type=int, default=64, help='Number of batch size to run neural network training')
+    parser.add_argument('--batch_size', type=int, default=64, help='Number of batch size to run neural network training')
     parser.add_argument('--output_dir', type=str, default=os.getcwd(), help='Directory to save outputs')
     args = parser.parse_args()
 
