@@ -1,0 +1,23 @@
+PLINK v2.00a6LM AVX2 Intel (18 Aug 2024)
+Options in effect:
+  --bfile GBR_chr_22_1200_samples_merged
+  --freq
+  --out GBR_chr_22_1200_samples_merged
+
+Hostname: math-alderaan
+Working directory: /home/math/duffme/toy_example
+Start time: Tue Sep  3 08:10:36 2024
+
+Random number seed: 1725372636
+257473 MiB RAM detected, ~239627 available; reserving 128736 MiB for main
+workspace.
+Using up to 64 threads (change this with --threads).
+1200 samples (0 females, 0 males, 1200 ambiguous; 1200 founders) loaded from
+GBR_chr_22_1200_samples_merged.fam.
+21999 variants loaded from GBR_chr_22_1200_samples_merged.bim.
+1 binary phenotype loaded (0 cases, 1200 controls).
+Calculating allele frequencies... done.
+--freq: Allele frequencies (founders only) written to
+GBR_chr_22_1200_samples_merged.afreq .
+
+End time: Tue Sep  3 08:10:36 2024
