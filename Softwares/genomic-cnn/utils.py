@@ -1,0 +1,309 @@
+#!/bin/env python3
+
+import tensorflow as tf
+import pandas_plink as ppl
+from pandas_plink import read_plink1_bin
+from tensorflow import keras
+from keras import backend as K
+from tensorflow.keras import layers, regularizers
+from tensorflow.keras.layers import experimental, InputLayer, Dropout, Flatten
+from tensorflow.keras.callbacks import EarlyStopping
+import keras_tuner as kt
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+import dask.array as da
+import numpy as np
+import math
+from keras_tuner.tuners import RandomSearch
+from keras_tuner.tuners import Hyperband
+from tensorflow.keras.layers import LayerNormalization
+import os, psutil
+import datetime
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.utils import plot_model
+from tensorflow.keras import metrics
+import pickle
+import sys
+import signal
+import time
+import matplotlib.pyplot as plt
+from functions import *
+import csv
+import random
+
+def set_seed(seed=None):
+    if seed is None:
+        seed = int(time.time())  # Default to a random seed based on the current time
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    random.seed(seed)
+    print(f"Seed set to: {seed}")
+    return seed
+
+def get_timestamp():
+    return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+def print_current_time(label):
+    print(f"{label}: {str(datetime.datetime.now())}", flush=True)
+
+def read_plink_files(train_file_prefix, val_file_prefix, test_file_prefix):
+    print_current_time("Time before data set reading")
+    
+    train_bim, train_fam, train_bed = ppl.read_plink(train_file_prefix)
+    print("Finished reading in train sets")
+    
+    val_bim, val_fam, val_bed = ppl.read_plink(val_file_prefix)
+    print("Finished reading in validation sets")
+    
+    test_bim, test_fam, test_bed = ppl.read_plink(test_file_prefix)
+    print("Finished reading in test sets", flush=True)
+    
+    print_current_time("Time after data set reading")
+    
+    return (train_bim, train_fam, train_bed), (val_bim, val_fam, val_bed), (test_bim, test_fam, test_bed)
+
+def load_gwas_and_subset(snp_file, p_value_threshold, train_data, val_data, test_data):
+    train_bim, train_fam, train_bed = train_data
+    val_bim, val_fam, val_bed = val_data
+    test_bim, test_fam, test_bed = test_data
+    
+    print("################### Load in GWAS analysis files to get top SNPs ##############################")
+    
+    return subset_bed_bim_fam(
+        snp_file, p_value_threshold, train_bim, train_bed, train_fam, 
+        val_bim, val_bed, val_fam, test_bim, test_bed, test_fam
+    )
+
+def read_genotypes(filtered_bed, label):
+    print(f"################################ To read in {label} genotypes ######################################")
+    print(f"Start {label} genotypes...")
+    
+    genotypes = get_genotypes(filtered_bed, 10)
+    
+    print(f"{label.capitalize()} genotype shape:" + str(genotypes.shape))
+    
+    return genotypes
+
+def standardize_and_prepare_data(train_af_file, matching_rows, train_genotypes, val_genotypes, test_genotypes):
+    print("-- Standardize Gentoype Data")
+    
+    return standardize_geno(train_af_file, matching_rows, train_genotypes, val_genotypes, test_genotypes)
+
+def read_and_standardize_phenotypes(train_pheno_file_name, val_pheno_file_name, test_pheno_file_name):
+    print("-- Standardize Phenotype Data")
+    
+    return read_and_standardize_pheno(train_pheno_file_name, val_pheno_file_name, test_pheno_file_name)
+
+def prepare_tensors(X_train, Y_train, X_val, Y_val, X_test, Y_test):
+    # Reshape the input data to have the appropriate shape
+    X_train_reshaped = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+    Y_train_array = Y_train.to_numpy()
+    Y_train_reshaped = np.reshape(Y_train_array, (Y_train_array.shape[0], 1))
+
+    # Reshape the validation data as well
+    X_val_reshaped = np.reshape(X_val, (X_val.shape[0], X_val.shape[1], 1))
+    Y_val_array = Y_val.to_numpy()
+    Y_val_reshaped = np.reshape(Y_val_array, (Y_val_array.shape[0], 1))
+
+    # Reshape the validation data as well
+    X_test_reshaped = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+    Y_test_array = Y_test.to_numpy()
+    Y_test_reshaped = np.reshape(Y_test_array, (Y_test_array.shape[0], 1))
+
+    # Convert to tensors for memory efficiency
+    X_train_tensor = tf.convert_to_tensor(X_train_reshaped, dtype=tf.float32)
+    X_val_tensor = tf.convert_to_tensor(X_val_reshaped, dtype=tf.float32)
+    X_test_tensor = tf.convert_to_tensor(X_test_reshaped, dtype=tf.float32)
+
+    Y_train_tensor = tf.convert_to_tensor(Y_train_reshaped, dtype=tf.float32)
+    Y_val_tensor = tf.convert_to_tensor(Y_val_reshaped, dtype=tf.float32)
+    Y_test_tensor = tf.convert_to_tensor(Y_test_reshaped, dtype=tf.float32)
+    
+    return X_train_tensor, Y_train_tensor, X_val_tensor, Y_val_tensor, X_test_tensor, Y_test_tensor
+
+def build_CNN(hp, X_train_tensor):
+    # Define model to be of sequential nature
+    model = tf.keras.Sequential()
+    # Create input layer with appropriate number of nodes
+    model.add(InputLayer(input_shape=(X_train_tensor.shape[1], X_train_tensor.shape[2])))
+    # Add convolutional and batch normalization layers
+    for i in range(2):
+        model.add(tf.keras.layers.Conv1D(filters=hp.Choice("filters_" + str(i), [5, 8, 16]),
+                                         kernel_size=hp.Choice("conv_kernel_size_" + str(i), [4, 5, 8]),
+                                         activation=hp.Choice('conv_activation_function', ["relu", "tanh", "linear"]),
+                                         padding=hp.Choice("conv_padding_" + str(i), ["same"]),
+                                         strides=hp.Choice("conv_stride_" + str(i), [1, 2, 3])))
+        model.add(tf.keras.layers.BatchNormalization())
+        model.add(tf.keras.layers.MaxPooling1D(pool_size=hp.Choice("pool_size_" + str(i), [2, 3, 5]),
+                                                padding="same",
+                                                strides=hp.Choice("pool_stride_" + str(i), [2, 3, 5])))
+        model.add(layers.Dropout(hp.Float("conv_drop_rate", min_value=0.05, max_value=0.55, step=0.10)))
+    model.add(Flatten())
+    # Tune the number of layers and nodes in the hidden layers
+    # Within each layer tune choice of activation function and strength of L2 regularization
+    for i in range(hp.Int('fc_num_layers', min_value=1, max_value=3, step=1)):
+        model.add(tf.keras.layers.Dense(units=hp.Int('fc_num_of_nodes', min_value=16, max_value=208, step=32),
+                                        activation=hp.Choice('fc_activation_function', ["relu", "tanh", "linear"]),
+                                        kernel_regularizer=keras.regularizers.l2(hp.Choice('fc_l2', [0.01, 0.15, 0.225, 0.3]))))
+        model.add(tf.keras.layers.BatchNormalization())
+        # Tune if dropout layer should be added and if so tune the drop out rate
+        model.add(layers.Dropout(hp.Float("fc_drop_rate", min_value=0.05, max_value=0.55, step=0.10)))
+    # Add the output layer
+    model.add(tf.keras.layers.Dense(1, activation='linear'))
+    # Compile the model with appropriate loss function and optimizer
+    model.compile(optimizer=hp.Choice('optim', ['adam', 'adamax', 'sgd']),
+                  loss='mean_squared_error',
+                  metrics=['mean_squared_error', tf.keras.metrics.RootMeanSquaredError()])
+    # Tune the learning rate
+    learning_rate = hp.Choice('learning_rate', values=[1e-3, 1e-4])
+    K.set_value(model.optimizer.learning_rate, learning_rate)
+    return model
+
+def setup_tuner(num_epochs, nn_directory_path, nn_project_name, X_train_tensor):
+    """Sets up the Hyperband tuner for hyperparameter optimization."""
+    
+    return Hyperband(
+        hypermodel=lambda hp: build_CNN(hp, X_train_tensor),
+        objective='val_mean_squared_error',
+        max_epochs=num_epochs,
+        hyperband_iterations=1,
+        directory=nn_directory_path,
+        project_name=nn_project_name,
+        overwrite=True
+    )
+
+def setup_early_stopping(num_epochs):
+    """Sets up early stopping callback."""
+    
+    return EarlyStopping(monitor='val_loss', patience=int(num_epochs * 0.10))
+
+def monitor_memory_usage(label):
+    """Prints memory usage with a given label."""
+    
+    p = psutil.Process(os.getpid())
+    print(f"Memory Usage ({label}): {p.memory_info().rss / 1024 / 1024:.2f} MB")
+
+def search_best_hyperparameters(tuner, X_train_tensor, Y_train_tensor, X_val_tensor, Y_val_tensor, num_batch_size, num_epochs):
+    """Searches for the best hyperparameters using the tuner."""
+    
+    stop_early = setup_early_stopping(num_epochs)
+    monitor_memory_usage("before hp opt")
+    
+    tuner.search(
+        X_train_tensor, Y_train_tensor,
+        validation_data=(X_val_tensor, Y_val_tensor),
+        batch_size=num_batch_size,
+        epochs=num_epochs,
+        verbose=1,
+        callbacks=[stop_early]
+    )
+    
+    monitor_memory_usage("after hp opt")
+
+def save_best_hyperparameters_and_model(tuner, save_model_parameter_file, save_model_file):
+    """Saves the best hyperparameters and model."""
+    
+    print("Retrieving hyperparameters...")
+    tf.keras.backend.clear_session()
+    best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+    
+    print("The hyperparameter search is complete.")
+    print(best_hps.get_config()['values'])
+    
+    print("Getting the best model")
+    best_model = tuner.get_best_models(1)[0]
+    
+    print("Saving best model parameters...")
+    with open(save_model_parameter_file, 'wb') as f:
+        pickle.dump(best_hps, f)
+    
+    print("Saving best model...")
+    with open(save_model_file, 'wb') as f:
+        pickle.dump(best_model, f)
+    
+    print("Building best model...")
+    return tuner.hypermodel.build(best_hps)
+
+def setup_early_stopping(num_epochs):
+    """Sets up early stopping callback with given patience."""
+    return tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        patience=int(0.10 * num_epochs),
+        verbose=0,
+        restore_best_weights=True
+    )
+
+def train_best_model(best_model_params, X_train_tensor, Y_train_tensor, X_val_tensor, Y_val_tensor, num_epochs, num_batch_size, early_stopping):
+    """Trains the best model with early stopping to find the optimal number of epochs."""
+    return best_model_params.fit(
+        X_train_tensor,
+        Y_train_tensor,
+        validation_data=(X_val_tensor, Y_val_tensor),
+        batch_size=num_batch_size,
+        epochs=num_epochs,
+        verbose=0,
+        callbacks=[early_stopping]
+    )
+
+def plot_training_history(history, loss_plot_figure_file):
+    """Plots training and validation loss over epochs and saves the plot to a file."""
+    train_loss = history.history['loss']
+    val_loss = history.history['val_loss']
+    num_epochs = len(train_loss)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, num_epochs + 1), train_loss, label='Training Loss')
+    plt.plot(range(1, num_epochs + 1), val_loss, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss over Epochs')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(loss_plot_figure_file)
+    plt.close()
+
+def save_best_model(best_model_params, save_trained_best_model_file):
+    """Saves the best trained model to a file."""
+    best_model_params.save(save_trained_best_model_file)
+
+def display_model_summary(best_model_params):
+    """Prints the summary of the best model."""
+    best_model_params.summary()
+
+def get_predictions(model, X_train_tensor, X_val_tensor, X_test_tensor):
+    """Get model predictions and reshape them to 1-D array."""
+    Y_train_pred = model.predict(X_train_tensor).reshape(-1)
+    Y_val_pred = model.predict(X_val_tensor).reshape(-1)
+    Y_test_pred = model.predict(X_test_tensor).reshape(-1)
+    return Y_train_pred, Y_val_pred, Y_test_pred
+
+def calculate_metrics(Y_true, Y_pred):
+    """Calculate correlation and MSE between true and predicted values."""
+    correlation = np.corrcoef(Y_true, Y_pred)[0, 1]
+    mse = np.mean((Y_true - Y_pred) ** 2)
+    return correlation, mse
+
+def evaluate_model(model, X_test_tensor, Y_test_tensor):
+    """Evaluate the model on the test dataset."""
+    return model.evaluate(X_test_tensor, Y_test_tensor, return_dict=True)
+
+def save_results_to_csv(csv_file, train_correlation, val_correlation, test_correlation,
+                        train_mse, val_mse, test_mse, train_r2, val_r2, test_r2):
+    """Save evaluation results to a CSV file."""
+    data = [
+        ["Train_Correlation", "Validation_Correlation", "Test_Correlation", "Train_MSE", "Validation_MSE", "Test_MSE", "Train_R2", "Validation_R2", "Test_R2"],
+        [train_correlation, val_correlation, test_correlation, train_mse, val_mse, test_mse, train_r2, val_r2, test_r2]
+    ]
+    with open(csv_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerows(data)
+    print(f"Results saved to {csv_file}")
+
+def print_results(train_correlation, val_correlation, test_correlation,
+                  train_mse, val_mse, test_mse, train_r2, val_r2, test_r2):
+    """Print the evaluation results."""
+    print("FOR NEURAL NETWORK:")
+    print(f"Training Set - Correlation: {train_correlation}, MSE: {train_mse}, R2: {train_r2}")
+    print(f"Validation Set - Correlation: {val_correlation}, MSE: {val_mse}, R2: {val_r2}")
+    print(f"Test Set - Correlation: {test_correlation}, MSE: {test_mse}, R2: {test_r2}")
+
